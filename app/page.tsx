@@ -1,0 +1,1 @@
+export default function Home() { return ( <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontFamily: "Arial, sans-serif", background: "#0b0b0b", color: "#ffffff", }} > <div style={{ textAlign: "center" }}> <h1>Ambienco Alert Bridge</h1> <p>Webhook service is online.</p> </div> </main> ); } 
