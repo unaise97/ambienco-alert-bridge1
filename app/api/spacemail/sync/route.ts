@@ -6,8 +6,13 @@ const DATA_SOURCE_ID = "20525e96-77ee-4b60-a9bd-188c87572ffb";
 const MARKER = "[SPACE-MAIL-DRAFT-CREATED]";
 
 function encodeSubject(subject: string) {
-  if (/^[\x00-\x7F]*$/.test(subject)) return subject;
-  return `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
+  if (/^[\x00-\x7F]*$/.test(subject)) {
+    return subject;
+  }
+
+  return `=?UTF-8?B?${Buffer.from(subject, "utf8").toString(
+    "base64"
+  )}?=`;
 }
 
 function buildMessage(
@@ -43,15 +48,18 @@ async function notionRequest(
     throw new Error("NOTION_API_KEY is missing.");
   }
 
-  const response = await fetch(`https://api.notion.com/v1${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Notion-Version": "2025-09-03",
-      "Content-Type": "application/json",
-      ...(options.headers || {})
+  const response = await fetch(
+    `https://api.notion.com/v1${path}`,
+    {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": "2025-09-03",
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
     }
-  });
+  );
 
   const data = await response.json();
 
@@ -65,7 +73,9 @@ async function notionRequest(
 }
 
 function getText(property: any): string {
-  if (!property) return "";
+  if (!property) {
+    return "";
+  }
 
   if (property.type === "title") {
     return (property.title || [])
@@ -95,13 +105,37 @@ function getText(property: any): string {
 }
 
 function getTitle(properties: any): string {
-  for (const property of Object.values(properties || {}) as any[]) {
+  for (const property of Object.values(
+    properties || {}
+  ) as any[]) {
     if (property.type === "title") {
       return getText(property);
     }
   }
 
   return "";
+}
+
+async function getDraftLeads() {
+  const result = await notionRequest(
+    `/data_sources/${DATA_SOURCE_ID}/query`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        page_size: 100,
+        filter: {
+          property: "Email Status",
+          select: {
+            equals: "Draft ready"
+          }
+        }
+      })
+    }
+  );
+
+  return result.results || [];
+}
+
 async function updateNotionPage(
   pageId: string,
   activityHistory: string,
@@ -145,10 +179,14 @@ async function findDraftsMailbox(client: ImapFlow) {
       box.name?.toLowerCase() === "drafts"
   );
 
-  if (exact) return exact.path;
+  if (exact) {
+    return exact.path;
+  }
 
   const candidate = boxes.find((box: any) => {
-    const name = `${box.path} ${box.name || ""}`.toLowerCase();
+    const name =
+      `${box.path} ${box.name || ""}`.toLowerCase();
+
     return name.includes("draft");
   });
 
@@ -160,7 +198,10 @@ export async function GET(request: Request) {
 
   if (!secret) {
     return Response.json(
-      { ok: false, error: "BRIDGE_SYNC_SECRET is missing." },
+      {
+        ok: false,
+        error: "BRIDGE_SYNC_SECRET is missing."
+      },
       { status: 500 }
     );
   }
@@ -171,7 +212,10 @@ export async function GET(request: Request) {
 
   if (provided !== secret) {
     return Response.json(
-      { ok: false, error: "Unauthorized." },
+      {
+        ok: false,
+        error: "Unauthorized."
+      },
       { status: 401 }
     );
   }
@@ -187,7 +231,10 @@ export async function POST(request: Request) {
 
   if (!secret) {
     return Response.json(
-      { ok: false, error: "BRIDGE_SYNC_SECRET is missing." },
+      {
+        ok: false,
+        error: "BRIDGE_SYNC_SECRET is missing."
+      },
       { status: 500 }
     );
   }
@@ -196,7 +243,10 @@ export async function POST(request: Request) {
 
   if (provided !== secret) {
     return Response.json(
-      { ok: false, error: "Unauthorized." },
+      {
+        ok: false,
+        error: "Unauthorized."
+      },
       { status: 401 }
     );
   }
@@ -207,14 +257,19 @@ export async function POST(request: Request) {
     return Response.json({
       ok: true,
       created: 0,
-      message: "No Notion leads with Email Status = Draft ready."
+      message:
+        "No Notion leads with Email Status = Draft ready."
     });
   }
 
   const user = process.env.SPACEMAIL_USER;
   const password = process.env.SPACEMAIL_PASSWORD;
-  const host = process.env.SPACEMAIL_IMAP_HOST || "mail.spacemail.com";
-  const port = Number(process.env.SPACEMAIL_IMAP_PORT || "993");
+  const host =
+    process.env.SPACEMAIL_IMAP_HOST ||
+    "mail.spacemail.com";
+  const port = Number(
+    process.env.SPACEMAIL_IMAP_PORT || "993"
+  );
 
   if (!user || !password) {
     return Response.json(
@@ -242,14 +297,19 @@ export async function POST(request: Request) {
   try {
     await client.connect();
 
-    const draftsMailbox = await findDraftsMailbox(client);
+    const draftsMailbox =
+      await findDraftsMailbox(client);
 
     for (const lead of leads) {
       const properties = lead.properties || {};
 
       const email = getText(properties["Email"]);
-      const subject = getText(properties["Email Subject"]);
-      const body = getText(properties["Email Body"]);
+      const subject = getText(
+        properties["Email Subject"]
+      );
+      const body = getText(
+        properties["Email Body"]
+      );
 
       if (!email || !subject || !body) {
         skipped.push(lead.id);
@@ -280,7 +340,8 @@ export async function POST(request: Request) {
         ["\\Draft"]
       );
 
-      const timestamp = new Date().toISOString();
+      const timestamp =
+        new Date().toISOString();
 
       const updatedHistory =
         `${activityHistory}\n${MARKER} ${timestamp} — Draft created in SpaceMail Drafts.`
@@ -292,7 +353,9 @@ export async function POST(request: Request) {
         "Review and send the draft in Outlook."
       );
 
-      created.push(getTitle(properties) || lead.id);
+      created.push(
+        getTitle(properties) || lead.id
+      );
     }
 
     return Response.json({
