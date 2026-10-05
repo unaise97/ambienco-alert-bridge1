@@ -102,28 +102,6 @@ function getTitle(properties: any): string {
   }
 
   return "";
-}
-
-async function getDraftLeads() {
-  const result = await notionRequest(
-    `/data_sources/${DATA_SOURCE_ID}/query`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        page_size: 100,
-        filter: {
-          property: "Email Status",
-          select: {
-            equals: "Draft ready"
-          }
-        }
-      })
-    }
-  );
-
-  return result.results || [];
-}
-
 async function updateNotionPage(
   pageId: string,
   activityHistory: string,
@@ -145,4 +123,197 @@ async function updateNotionPage(
         },
         "Next Action": {
           rich_text: [
-           
+            {
+              type: "text",
+              text: {
+                content: nextAction
+              }
+            }
+          ]
+        }
+      }
+    })
+  });
+}
+
+async function findDraftsMailbox(client: ImapFlow) {
+  const boxes = await client.list();
+
+  const exact = boxes.find(
+    (box: any) =>
+      box.path.toLowerCase() === "drafts" ||
+      box.name?.toLowerCase() === "drafts"
+  );
+
+  if (exact) return exact.path;
+
+  const candidate = boxes.find((box: any) => {
+    const name = `${box.path} ${box.name || ""}`.toLowerCase();
+    return name.includes("draft");
+  });
+
+  return candidate?.path || "Drafts";
+}
+
+export async function GET(request: Request) {
+  const secret = process.env.BRIDGE_SYNC_SECRET;
+
+  if (!secret) {
+    return Response.json(
+      { ok: false, error: "BRIDGE_SYNC_SECRET is missing." },
+      { status: 500 }
+    );
+  }
+
+  const provided =
+    request.headers.get("x-sync-secret") ||
+    new URL(request.url).searchParams.get("secret");
+
+  if (provided !== secret) {
+    return Response.json(
+      { ok: false, error: "Unauthorized." },
+      { status: 401 }
+    );
+  }
+
+  return Response.json({
+    ok: true,
+    service: "SpaceMail Draft Sync"
+  });
+}
+
+export async function POST(request: Request) {
+  const secret = process.env.BRIDGE_SYNC_SECRET;
+
+  if (!secret) {
+    return Response.json(
+      { ok: false, error: "BRIDGE_SYNC_SECRET is missing." },
+      { status: 500 }
+    );
+  }
+
+  const provided = request.headers.get("x-sync-secret");
+
+  if (provided !== secret) {
+    return Response.json(
+      { ok: false, error: "Unauthorized." },
+      { status: 401 }
+    );
+  }
+
+  const leads = await getDraftLeads();
+
+  if (!leads.length) {
+    return Response.json({
+      ok: true,
+      created: 0,
+      message: "No Notion leads with Email Status = Draft ready."
+    });
+  }
+
+  const user = process.env.SPACEMAIL_USER;
+  const password = process.env.SPACEMAIL_PASSWORD;
+  const host = process.env.SPACEMAIL_IMAP_HOST || "mail.spacemail.com";
+  const port = Number(process.env.SPACEMAIL_IMAP_PORT || "993");
+
+  if (!user || !password) {
+    return Response.json(
+      {
+        ok: false,
+        error: "SpaceMail credentials are missing."
+      },
+      { status: 500 }
+    );
+  }
+
+  const client = new ImapFlow({
+    host,
+    port,
+    secure: true,
+    auth: {
+      user,
+      pass: password
+    }
+  });
+
+  const created: string[] = [];
+  const skipped: string[] = [];
+
+  try {
+    await client.connect();
+
+    const draftsMailbox = await findDraftsMailbox(client);
+
+    for (const lead of leads) {
+      const properties = lead.properties || {};
+
+      const email = getText(properties["Email"]);
+      const subject = getText(properties["Email Subject"]);
+      const body = getText(properties["Email Body"]);
+
+      if (!email || !subject || !body) {
+        skipped.push(lead.id);
+        continue;
+      }
+
+      const activityHistory = getText(
+        properties["Activity History"]
+      );
+
+      if (activityHistory.includes(MARKER)) {
+        skipped.push(lead.id);
+        continue;
+      }
+
+      const message = buildMessage(
+        user,
+        email,
+        subject,
+        body
+      );
+
+      await client.mailboxOpen(draftsMailbox);
+
+      await client.append(
+        draftsMailbox,
+        message,
+        ["\\Draft"]
+      );
+
+      const timestamp = new Date().toISOString();
+
+      const updatedHistory =
+        `${activityHistory}\n${MARKER} ${timestamp} — Draft created in SpaceMail Drafts.`
+          .trim();
+
+      await updateNotionPage(
+        lead.id,
+        updatedHistory,
+        "Review and send the draft in Outlook."
+      );
+
+      created.push(getTitle(properties) || lead.id);
+    }
+
+    return Response.json({
+      ok: true,
+      created: created.length,
+      skipped: skipped.length,
+      createdLeads: created,
+      skippedLeads: skipped,
+      mailbox: draftsMailbox
+    });
+  } catch (error: any) {
+    return Response.json(
+      {
+        ok: false,
+        error: error?.message || String(error)
+      },
+      { status: 500 }
+    );
+  } finally {
+    try {
+      await client.logout();
+    } catch {}
+  }
+}
