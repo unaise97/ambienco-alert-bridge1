@@ -1,0 +1,17 @@
+name: Sync Notion Drafts to SpaceMail
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger SpaceMail draft sync
+        run: |
+          curl --fail-with-body -X POST \
+            -H "x-sync-secret: ${{ secrets.DEPLOXO_SYNC_SECRET }}" \
+            https://ambienco-mail-bridge.de.deplexo.com/api/spacemail/sync
