@@ -9,10 +9,11 @@ export async function GET() {
   const port = Number(process.env.SPACEMAIL_IMAP_PORT || "993");
 
   if (!user || !password || !host) {
-    return Response.json(
-      { ok: false, error: "SpaceMail environment variables are missing." },
-      { status: 500 }
-    );
+    return Response.json({
+      ok: false,
+      stage: "environment",
+      error: "SpaceMail environment variables are missing."
+    });
   }
 
   const client = new ImapFlow({
@@ -22,7 +23,10 @@ export async function GET() {
     auth: {
       user,
       pass: password
-    }
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
   });
 
   try {
@@ -37,7 +41,12 @@ export async function GET() {
     );
 
     if (!drafts) {
-      throw new Error("SpaceMail Drafts mailbox was not found.");
+      return Response.json({
+        ok: false,
+        stage: "mailbox",
+        error: "Connected successfully, but Drafts mailbox was not found.",
+        mailboxes: mailboxes.map((m) => m.path)
+      });
     }
 
     const message = [
@@ -54,22 +63,20 @@ export async function GET() {
       ""
     ].join("\r\n");
 
-    await client.append(
-      drafts.path,
-      message,
-      ["\\Draft"]
-    );
+    await client.append(drafts.path, message, ["\\Draft"]);
 
     return Response.json({
       ok: true,
+      stage: "complete",
       created: 1,
       mailbox: drafts.path
     });
   } catch (error) {
     return Response.json({
       ok: false,
+      stage: "connection_or_authentication",
       error: error instanceof Error ? error.message : "Unknown error"
-    }, { status: 500 });
+    });
   } finally {
     try {
       await client.logout();
